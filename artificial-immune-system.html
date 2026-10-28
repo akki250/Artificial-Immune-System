@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Artificial Immune System Simulator</title>
+<style>
+:root{--bg:#f4f7fb;--fg:#12294a;--card:#fff;--muted:#5b6b82;--line:#d5deeb;--self:#2f7de1;--det:#6b7fd7;--mem:#e0a100;--bad:#d9382c;--good:#1f9d57;--btn:#12294a;--btnfg:#fff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1a2e;--fg:#e8eefb;--card:#142540;--muted:#9fb0cc;--line:#26406a;--self:#5ea2ff;--det:#8d9ff0;--mem:#ffc83d;--bad:#ff6b5e;--good:#3ddc84;--btn:#5ea2ff;--btnfg:#0d1a2e}}
+:root[data-theme="dark"]{--bg:#0d1a2e;--fg:#e8eefb;--card:#142540;--muted:#9fb0cc;--line:#26406a;--self:#5ea2ff;--det:#8d9ff0;--mem:#ffc83d;--bad:#ff6b5e;--good:#3ddc84;--btn:#5ea2ff;--btnfg:#0d1a2e}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:.2rem 0}
+.sub{color:var(--muted);margin:0 0 14px}
+.grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px}
+@media(max-width:780px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+canvas{width:100%;aspect-ratio:1/1;display:block;border-radius:8px;background:var(--bg);border:1px solid var(--line)}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+button{background:var(--btn);color:var(--btnfg);border:0;border-radius:8px;padding:9px 12px;font-weight:600;cursor:pointer;font-size:.9rem}
+button.alt{background:transparent;color:var(--fg);border:1px solid var(--line)}
+label{display:block;font-size:.85rem;margin:8px 0 2px;color:var(--muted)}
+input[type=range]{width:100%}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.stat{border:1px solid var(--line);border-radius:8px;padding:8px}
+.stat b{display:block;font-size:1.3rem}
+.stat span{font-size:.75rem;color:var(--muted)}
+#log{height:120px;overflow-y:auto;font-size:.8rem;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:6px;margin:0}
+details{margin-top:12px;font-size:.88rem}
+summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>Artificial Immune System</h1>
+<p class="sub">A live model of negative selection and clonal selection. The “body” learns what is normal, then detects and remembers attackers.</p>
+<div class="grid">
+<div class="card">
+<canvas id="c" width="640" height="640"></canvas>
+<div class="legend"><span><i style="background:var(--self)"></i>Self (normal data)</span><span><i style="background:var(--det)"></i>Detector</span><span><i style="background:var(--mem)"></i>Memory cell</span><span><i style="background:var(--bad)"></i>Missed attack</span><span><i style="background:var(--good)"></i>Caught attack</span></div>
+</div>
+<div class="card">
+<div class="row">
+<button id="train">Train detectors</button>
+<button id="run">Start attack</button>
+<button id="path" class="alt">New pathogen</button>
+<button id="reset" class="alt">Reset stats</button>
+</div>
+<label>Detector radius: <span id="rv"></span></label>
+<input type="range" id="rad" min="3" max="12" value="6">
+<label>Number of detectors: <span id="nv"></span></label>
+<input type="range" id="num" min="50" max="400" step="10" value="200">
+<label>Antigens per second: <span id="av"></span></label>
+<input type="range" id="rate" min="1" max="12" value="5">
+<div class="stats">
+<div class="stat"><b id="s1">0%</b><span>Attack detection rate</span></div>
+<div class="stat"><b id="s2">0%</b><span>False alarm rate</span></div>
+<div class="stat"><b id="s3">0</b><span>Detectors / memory cells</span></div>
+<div class="stat"><b id="s4">0</b><span>Attacks sent / missed</span></div>
+</div>
+<p id="log"></p>
+<details><summary>How it works</summary>
+<p><b>1. Negative selection.</b> Random detectors are created. Any detector that overlaps a known self point is deleted, so survivors only cover non-self space.</p>
+<p><b>2. Detection.</b> Each new antigen is checked against all detectors. A hit on a normal antigen is a false alarm. A miss on an attack means infection.</p>
+<p><b>3. Clonal selection.</b> A detector that catches an attack becomes a memory cell and spawns mutated clones near it. The detection rate for that pathogen climbs over time.</p>
+<p>Try <b>New pathogen</b> to see the system face an unseen threat and adapt.</p></details>
+</div>
+</div>
+</main>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=640;
+const $=id=>document.getElementById(id);
+const C=0.5,SR=0.26,MAXD=700;
+let self=[],det=[],ants=[],pc={x:.86,y:.2},running=false,last=0,acc=0;
+let st={att:0,hit:0,miss:0,norm:0,fa:0};
+const rnd=Math.random,gs=()=>(rnd()+rnd()+rnd()-1.5)/1.5;
+const inSelf=(x,y)=>Math.hypot(x-C,y-C)<SR;
+function selfPt(){let a=rnd()*6.283,r=SR*Math.sqrt(rnd());return{x:C+r*Math.cos(a),y:C+r*Math.sin(a)}}
+function attackPt(){for(;;){let p=rnd()<.8?{x:pc.x+gs()*.07,y:pc.y+gs()*.07}:{x:rnd(),y:rnd()};
+if(p.x>0&&p.x<1&&p.y>0&&p.y<1&&Math.hypot(p.x-C,p.y-C)>SR+.04)return p}}
+const R=()=>$('rad').value/100;
+function overlapsSelf(x,y,r){return self.some(s=>Math.hypot(x-s.x,y-s.y)<r)}
+function log(t){const l=$('log');l.innerHTML=t+'<br>'+l.innerHTML}
+function train(){
+self=Array.from({length:120},selfPt);det=[];ants=[];
+const n=+$('num').value,r=R();let tries=0,rej=0;
+while(det.length<n&&tries<30000){tries++;const x=rnd(),y=rnd();
+if(overlapsSelf(x,y,r)){rej++;continue}det.push({x,y,r,mem:false,fl:0})}
+log('Negative selection: '+tries+' candidates, '+rej+' deleted for matching self, '+det.length+' detectors kept.');upd()}
+function spawn(){
+const attack=rnd()<.5,p=attack?attackPt():selfPt();
+let hit=null;for(const d of det){if(Math.hypot(p.x-d.x,p.y-d.y)<d.r){hit=d;break}}
+if(attack){st.att++;if(hit){st.hit++;hit.fl=1;clone(hit)}else st.miss++}
+else{st.norm++;if(hit){st.fa++;hit.fl=1}}
+ants.push({x:p.x,y:p.y,attack,hit:!!hit,life:1.4})}
+function clone(d){
+if(!d.mem){d.mem=true}
+for(let i=0;i<3&&det.length<MAXD;i++){const x=d.x+gs()*.05,y=d.y+gs()*.05;
+if(x<0||x>1||y<0||y>1||overlapsSelf(x,y,d.r))continue;det.push({x,y,r:d.r,mem:true,fl:0})}}
+function upd(){
+$('rv').textContent=R().toFixed(2);$('nv').textContent=$('num').value;$('av').textContent=$('rate').value;
+$('s1').textContent=st.att?Math.round(100*st.hit/st.att)+'%':'-';
+$('s2').textContent=st.norm?Math.round(100*st.fa/st.norm)+'%':'-';
+$('s3').textContent=det.length+' / '+det.filter(d=>d.mem).length;
+$('s4').textContent=st.att+' / '+st.miss}
+function col(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function draw(){
+const k=cv.width;ctx.clearRect(0,0,k,k);
+const cs=col('--self'),cd=col('--det'),cm=col('--mem'),cb=col('--bad'),cg=col('--good');
+ctx.globalAlpha=.07;ctx.fillStyle=cs;ctx.beginPath();ctx.arc(C*k,C*k,SR*k,0,7);ctx.fill();ctx.globalAlpha=1;
+for(const d of det){ctx.beginPath();ctx.arc(d.x*k,d.y*k,d.r*k,0,7);
+ctx.globalAlpha=d.fl>0?.55:.16;ctx.fillStyle=d.mem?cm:cd;ctx.fill();
+ctx.globalAlpha=.6;ctx.strokeStyle=d.mem?cm:cd;ctx.lineWidth=1;ctx.stroke();if(d.fl>0)d.fl-=.03}
+ctx.globalAlpha=1;ctx.fillStyle=cs;for(const s of self){ctx.beginPath();ctx.arc(s.x*k,s.y*k,2.5,0,7);ctx.fill()}
+for(const a of ants){ctx.globalAlpha=Math.min(1,a.life);const c=a.attack?(a.hit?cg:cb):cs;
+ctx.strokeStyle=c;ctx.fillStyle=c;ctx.lineWidth=2.5;ctx.beginPath();
+if(a.attack){const x=a.x*k,y=a.y*k,s=6;ctx.moveTo(x-s,y-s);ctx.lineTo(x+s,y+s);ctx.moveTo(x+s,y-s);ctx.lineTo(x-s,y+s);ctx.stroke()}
+else{ctx.arc(a.x*k,a.y*k,a.hit?7:4,0,7);a.hit?ctx.stroke():ctx.fill()}}
+ctx.globalAlpha=1}
+function loop(t){
+const dt=Math.min(.05,(t-last)/1000||0);last=t;
+if(running){acc+=dt*$('rate').value;while(acc>=1){spawn();acc--}upd()}
+for(const a of ants)a.life-=dt;ants=ants.filter(a=>a.life>0);draw();requestAnimationFrame(loop)}
+$('train').onclick=()=>{train()};
+$('run').onclick=e=>{running=!running;e.target.textContent=running?'Pause attack':'Start attack'};
+$('path').onclick=()=>{do{pc={x:.1+.8*rnd(),y:.1+.8*rnd()}}while(Math.hypot(pc.x-C,pc.y-C)<SR+.15);log('A new, unseen pathogen has appeared.')};
+$('reset').onclick=()=>{st={att:0,hit:0,miss:0,norm:0,fa:0};upd()};
+['rad','num','rate'].forEach(i=>$(i).oninput=()=>{upd()});
+$('rad').onchange=$('num').onchange=train;
+train();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
